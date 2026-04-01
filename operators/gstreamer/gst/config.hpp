@@ -29,4 +29,12 @@
 #define HOLOSCAN_GSTREAMER_CUDA_SUPPORT 0
 #endif  // HOLOSCAN_GSTREAMER_CUDA_SUPPORT
 
+// NVMM (NvBufSurface) support for DeepStream integration.
+// Defined by CMakeLists.txt when the DeepStream SDK nvbufsurface library is found.
+// When enabled, provides NvmmAllocator and NvmmMemoryWrapper for zero-copy
+// Holoscan-to-DeepStream data flow via memory:NVMM caps.
+#ifndef HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+#define HOLOSCAN_GSTREAMER_NVMM_SUPPORT 0
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+
 #endif /* GST_CONFIG_HPP */

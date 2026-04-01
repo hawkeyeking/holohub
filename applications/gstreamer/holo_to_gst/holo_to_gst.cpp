@@ -29,7 +29,11 @@
 #include <gst_src_resource.hpp>
 #include <gst_src_op.hpp>
 #include <gst/pipeline.hpp>
+#include <gst/config.hpp>
 #include <gst_pipeline_bus_monitor.hpp>
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+#include <nvmm_allocator.hpp>
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 #include "pattern_generator.hpp"
 #include "../common/arg_parser.hpp"
 
@@ -54,6 +58,9 @@ struct AppConfig {
   // V4L2 camera configuration
   std::string v4l2_device = "/dev/video0";
   std::string v4l2_pixel_format = "auto";  // "YUYV", "MJPEG", "auto", etc.
+
+  // NVMM mode for DeepStream integration (requires DeepStream SDK)
+  bool nvmm = false;
 };
 
 /**
@@ -90,6 +97,9 @@ void print_usage(const char* program_name) {
                  "first element as 'src'\n";
     std::cout << "  --caps <caps_string>     GStreamer capabilities string for the source\n";
     std::cout << "                            (default: video/x-raw,format=RGBA)\n";
+    std::cout << "  --nvmm                   Enable NVMM mode for DeepStream zero-copy integration\n";
+    std::cout << "                            Requires DeepStream SDK. Uses NvBufSurface memory.\n";
+    std::cout << "                            Caps will be set to video/x-raw(memory:NVMM)\n";
     std::cout << "  --help                   Show this help message\n\n";
     std::cout << "V4L2 Camera Options:\n";
     std::cout << "  --device <path>          V4L2 device path "
@@ -218,6 +228,8 @@ bool parse_arguments(int argc, char** argv, AppConfig& config) {
         if (config.caps.empty()) {
           throw std::invalid_argument("Caps string cannot be empty");
         }
+      } else if (arg == "--nvmm") {
+        config.nvmm = true;
       } else if ((arg == "--source" || arg == "-c" || arg == "--count" ||
                 arg == "-w" || arg == "--width" || arg == "-h" || arg == "--height" ||
                 arg == "-f" || arg == "--framerate" || arg == "--pattern" ||
@@ -395,13 +407,29 @@ class GstSrcApp : public Application {
       storage_type_(config.storage_type),
       source_(config.source),
       v4l2_device_(config.v4l2_device),
-      v4l2_pixel_format_(config.v4l2_pixel_format) {}
+      v4l2_pixel_format_(config.v4l2_pixel_format),
+      nvmm_(config.nvmm) {}
 
   void compose() override {
     // Build caps string with actual width, height, framerate, and memory type
-    // Memory feature must come right after media type: video/x-raw(memory:CUDAMemory)
+    // Memory feature must come right after media type: video/x-raw(memory:...)
     std::string full_caps;
 
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    if (nvmm_) {
+      // NVMM memory for DeepStream: inject memory:NVMM feature
+      std::string caps = caps_;
+      size_t pos = caps.find("video/x-raw");
+      if (pos != std::string::npos) {
+        caps.insert(pos + 11, "(memory:NVMM)");
+        full_caps = caps;
+      } else {
+        full_caps = "video/x-raw(memory:NVMM)," + caps_;
+      }
+      // Force storage_type to device for NVMM
+      storage_type_ = 1;
+    } else
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
     if (storage_type_ == 1) {
       // CUDA memory: inject memory feature into user's caps while preserving format
       // Find "video/x-raw" and insert (memory:CUDAMemory) after it
@@ -432,7 +460,27 @@ class GstSrcApp : public Application {
         Arg("max_buffers", DEFAULT_MAX_BUFFERS));
 
     // Create an allocator for tensor memory
-    auto allocator = make_resource<UnboundedAllocator>("allocator");
+    std::shared_ptr<Allocator> allocator;
+
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    if (nvmm_) {
+      // Create NVMM allocator for DeepStream zero-copy
+      // Color format 4 = NVBUF_COLOR_FORMAT_RGBA, mem_type 2 = NVBUF_MEM_CUDA_DEVICE
+      auto nvmm_alloc = make_resource<NvmmAllocator>("nvmm_allocator",
+          Arg("width", static_cast<int32_t>(width_)),
+          Arg("height", static_cast<int32_t>(height_)),
+          Arg("gpu_id", static_cast<int32_t>(0)),
+          Arg("color_format", static_cast<int32_t>(4)),  // NVBUF_COLOR_FORMAT_RGBA
+          Arg("mem_type", static_cast<int32_t>(2)));     // NVBUF_MEM_CUDA_DEVICE
+      allocator = nvmm_alloc;
+      // Set NVMM allocator on the resource for NvBufSurface lookup
+      holoscan_gst_src_resource_->set_nvmm_allocator(nvmm_alloc);
+      HOLOSCAN_LOG_INFO("Using NvmmAllocator for DeepStream zero-copy mode");
+    } else
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    {
+      allocator = make_resource<UnboundedAllocator>("allocator");
+    }
 
     // Create the video source operator based on source selection
     std::shared_ptr<Operator> source_op;
@@ -505,6 +553,7 @@ class GstSrcApp : public Application {
   std::string source_;
   std::string v4l2_device_;
   std::string v4l2_pixel_format_;
+  bool nvmm_;
   std::shared_ptr<GstSrcResource> holoscan_gst_src_resource_;
 };
 
@@ -524,6 +573,17 @@ int main(int argc, char** argv) {
     // Log configuration before creating app
     HOLOSCAN_LOG_INFO("Starting Holoscan to GStreamer Bridge");
     HOLOSCAN_LOG_INFO("Source: {}", config.source);
+
+    // Check NVMM support
+    if (config.nvmm) {
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+      HOLOSCAN_LOG_INFO("NVMM mode: ENABLED (DeepStream zero-copy)");
+#else
+      HOLOSCAN_LOG_ERROR("NVMM mode requested but not compiled. "
+                         "Rebuild with DeepStream SDK to enable NVMM support.");
+      return 1;
+#endif
+    }
 
     if (config.source == "v4l2") {
       HOLOSCAN_LOG_INFO("V4L2 camera: device={}, pixel_format={}",

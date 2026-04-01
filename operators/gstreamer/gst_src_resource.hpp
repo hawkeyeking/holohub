@@ -24,7 +24,12 @@
 #include <holoscan/holoscan.hpp>
 
 #include "gst/buffer.hpp"
+#include "gst/config.hpp"
 #include "gst_src_bridge.hpp"
+
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+#include "nvmm_allocator.hpp"
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
 namespace holoscan {
 
@@ -96,6 +101,18 @@ class GstSrcResource : public Resource {
    */
   gst::Buffer create_buffer_from_tensor_map(const TensorMap& tensor_map) const;
 
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  /**
+   * @brief Set the NvmmAllocator for NVMM/DeepStream zero-copy mode
+   *
+   * Must be called before initialize() for the allocator to take effect.
+   * When set, the bridge will use NvmmMemoryWrapper for buffer creation.
+   *
+   * @param allocator The NvmmAllocator used for tensor memory allocation
+   */
+  void set_nvmm_allocator(std::shared_ptr<NvmmAllocator> allocator);
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+
  private:
   // Bridge to GStreamer (does the actual work)
   std::shared_ptr<GstSrcBridge> bridge_;
@@ -104,6 +121,11 @@ class GstSrcResource : public Resource {
   Parameter<std::string> caps_;
   Parameter<size_t> max_buffers_;
   Parameter<bool> block_;
+
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  // Optional NVMM allocator for DeepStream integration
+  std::shared_ptr<NvmmAllocator> nvmm_allocator_;
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
   // Promise/future for element access (resolves after initialize())
   std::promise<gst::Element> element_promise_;

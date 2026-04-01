@@ -33,6 +33,13 @@
 #include "gst/caps.hpp"
 #include "gst/config.hpp"
 
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+// Forward declaration
+namespace holoscan {
+class NvmmAllocator;
+}
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+
 namespace holoscan {
 
 /**
@@ -57,6 +64,20 @@ class GstSrcBridge {
    */
   GstSrcBridge(const std::string& name, const std::string& caps_string, size_t max_buffers,
                bool block = true);
+
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  /**
+   * @brief Constructor with NvmmAllocator - for NVMM/DeepStream zero-copy mode
+   * @param name Optional name for the appsrc element
+   * @param caps_string Capabilities string (must include memory:NVMM feature)
+   * @param max_buffers Maximum number of buffers in queue (0 = unlimited)
+   * @param nvmm_allocator NvmmAllocator used for tensor memory (for surface lookup)
+   * @param block If true, push_buffer() blocks when queue is full; if false, returns immediately
+   * @throws std::runtime_error if initialization fails
+   */
+  GstSrcBridge(const std::string& name, const std::string& caps_string, size_t max_buffers,
+               std::shared_ptr<NvmmAllocator> nvmm_allocator, bool block = true);
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
   /**
    * @brief Destructor - cleans up GStreamer resources
@@ -133,6 +154,9 @@ class GstSrcBridge {
 #if HOLOSCAN_GSTREAMER_CUDA_SUPPORT
   class CudaMemoryWrapper;
 #endif  // HOLOSCAN_GSTREAMER_CUDA_SUPPORT
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  friend class NvmmMemoryWrapper;
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
  private:
   // Configuration
@@ -148,10 +172,17 @@ class GstSrcBridge {
   gst::AppSrc src_element_;
 
   // Memory wrapper factory for zero-copy tensor to GstMemory conversion.
-  // Lazily initialized on first buffer creation based on tensor memory type (host/CUDA).
+  // Lazily initialized on first buffer creation based on tensor memory type (host/CUDA/NVMM).
   // Handles wrapping tensor data pointers as GstMemory objects without copying data.
   // Reused for all subsequent buffers for efficient memory management.
   std::shared_ptr<MemoryWrapper> memory_wrapper_;
+
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  // Optional NVMM allocator for DeepStream zero-copy integration.
+  // When set, the memory wrapper factory will create NvmmMemoryWrapper instances
+  // that can look up NvBufSurface* from tensor data pointers.
+  std::shared_ptr<NvmmAllocator> nvmm_allocator_;
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
   // Frame timing
   uint64_t frame_count_ =

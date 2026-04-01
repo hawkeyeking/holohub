@@ -40,6 +40,11 @@
 #define GST_CAPS_FEATURE_MEMORY_CUDA_MEMORY "memory:CUDAMemory"
 #endif
 
+// Define NVMM memory feature name for DeepStream integration
+#ifndef GST_CAPS_FEATURE_MEMORY_NVMM
+#define GST_CAPS_FEATURE_MEMORY_NVMM "memory:NVMM"
+#endif
+
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/logger/logger.hpp>
 
@@ -48,6 +53,10 @@
 #include "gst/memory.hpp"
 #include "gst/pad.hpp"
 #include "gst/video_info.hpp"
+
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+#include "nvmm_memory_wrapper.hpp"
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
 namespace holoscan {
 
@@ -318,10 +327,16 @@ void free_tensor_wrapper(::gpointer user_data) {
 
 /**
  * @brief Create memory wrapper based on caps
- * @param caps Capabilities to check for CUDA memory request and extract video format
+ * @param caps Capabilities to check for CUDA/NVMM memory request and extract video format
+ * @param nvmm_allocator Optional NvmmAllocator for NVMM mode (can be nullptr)
  * @return Shared pointer to the appropriate memory wrapper
  */
-std::shared_ptr<GstSrcBridge::MemoryWrapper> create_memory_wrapper(const gst::Caps& caps) {
+std::shared_ptr<GstSrcBridge::MemoryWrapper> create_memory_wrapper(
+    const gst::Caps& caps
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    , std::shared_ptr<NvmmAllocator> nvmm_allocator = nullptr
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    ) {
   // Extract video format from caps
   GstVideoFormat video_format = GST_VIDEO_FORMAT_UNKNOWN;
   if (!caps) {
@@ -340,6 +355,31 @@ std::shared_ptr<GstSrcBridge::MemoryWrapper> create_memory_wrapper(const gst::Ca
 
   // Check if CUDA memory is requested in caps using proper GStreamer API
   bool cuda_requested = caps.has_feature(GST_CAPS_FEATURE_MEMORY_CUDA_MEMORY);
+
+  // Check if NVMM memory is requested in caps (DeepStream integration)
+  bool nvmm_requested = caps.has_feature(GST_CAPS_FEATURE_MEMORY_NVMM);
+
+  // Use NvmmMemoryWrapper when NVMM is requested
+  if (nvmm_requested) {
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    if (!nvmm_allocator) {
+      HOLOSCAN_LOG_ERROR(
+          "NVMM memory requested in caps ('{}'), but no NvmmAllocator was provided. "
+          "Use the NvmmAllocator to allocate tensor memory for NVMM mode.",
+          caps.to_string());
+      return nullptr;
+    }
+    HOLOSCAN_LOG_INFO("Creating NVMM memory wrapper (memory:NVMM requested in caps)");
+    return std::make_shared<NvmmMemoryWrapper>(video_format, std::move(nvmm_allocator));
+#else
+    HOLOSCAN_LOG_ERROR(
+        "NVMM memory requested in caps ('{}'), but the code was built without "
+        "HOLOSCAN_GSTREAMER_NVMM_SUPPORT. Cannot wrap NvBufSurface memory. "
+        "Rebuild with DeepStream SDK support or use a different memory type.",
+        caps.to_string());
+    return nullptr;
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  }
 
   // Use CudaMemoryWrapper when GStreamer requests CUDA memory
   if (cuda_requested) {
@@ -440,6 +480,16 @@ GstSrcBridge::GstSrcBridge(const std::string& name, const std::string& caps_stri
                     framerate_den_);
 }
 
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+GstSrcBridge::GstSrcBridge(const std::string& name, const std::string& caps_string,
+                           size_t max_buffers, std::shared_ptr<NvmmAllocator> nvmm_allocator,
+                           bool block)
+    : GstSrcBridge(name, caps_string, max_buffers, block) {
+  nvmm_allocator_ = std::move(nvmm_allocator);
+  HOLOSCAN_LOG_INFO("GstSrcBridge: NVMM allocator set for DeepStream zero-copy mode");
+}
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+
 GstSrcBridge::~GstSrcBridge() {
   HOLOSCAN_LOG_INFO("Destroying GstSrcBridge");
 }
@@ -537,7 +587,11 @@ gst::Buffer GstSrcBridge::create_buffer_from_tensor_map(const TensorMap& tensor_
     // Lazy initialization of memory wrapper on first tensor
     if (!memory_wrapper_) {
       try {
-        memory_wrapper_ = create_memory_wrapper(caps_);
+        memory_wrapper_ = create_memory_wrapper(caps_
+#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+            , nvmm_allocator_
+#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+            );
         if (!memory_wrapper_) {
           HOLOSCAN_LOG_ERROR(
               "Memory wrapper creation returned null; aborting buffer creation");
