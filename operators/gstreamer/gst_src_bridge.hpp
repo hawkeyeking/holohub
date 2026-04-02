@@ -33,14 +33,9 @@
 #include "gst/caps.hpp"
 #include "gst/config.hpp"
 
-#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
-// Forward declaration
 namespace holoscan {
-class NvmmAllocator;
-}
-#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
-namespace holoscan {
+class Allocator;  // Forward declaration for custom allocator support
 
 /**
  * @brief Bridge between GStreamer and external data sources
@@ -64,20 +59,6 @@ class GstSrcBridge {
    */
   GstSrcBridge(const std::string& name, const std::string& caps_string, size_t max_buffers,
                bool block = true);
-
-#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
-  /**
-   * @brief Constructor with NvmmAllocator - for NVMM/DeepStream zero-copy mode
-   * @param name Optional name for the appsrc element
-   * @param caps_string Capabilities string (must include memory:NVMM feature)
-   * @param max_buffers Maximum number of buffers in queue (0 = unlimited)
-   * @param nvmm_allocator NvmmAllocator used for tensor memory (for surface lookup)
-   * @param block If true, push_buffer() blocks when queue is full; if false, returns immediately
-   * @throws std::runtime_error if initialization fails
-   */
-  GstSrcBridge(const std::string& name, const std::string& caps_string, size_t max_buffers,
-               std::shared_ptr<NvmmAllocator> nvmm_allocator, bool block = true);
-#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
   /**
    * @brief Destructor - cleans up GStreamer resources
@@ -148,15 +129,22 @@ class GstSrcBridge {
    */
   gst::Caps get_current_caps() const;
 
+  /**
+   * @brief Set a custom allocator for specialized memory wrapping (e.g., NVMM/DeepStream)
+   *
+   * When set, the memory wrapper factory can use this allocator for surface lookup
+   * during buffer creation. Must be called before the first buffer is created.
+   *
+   * @param allocator Custom allocator (e.g., NvmmAllocator for DeepStream zero-copy)
+   */
+  void set_custom_allocator(std::shared_ptr<Allocator> allocator);
+
   // Forward declarations for nested classes
   class MemoryWrapper;
   class HostMemoryWrapper;
 #if HOLOSCAN_GSTREAMER_CUDA_SUPPORT
   class CudaMemoryWrapper;
 #endif  // HOLOSCAN_GSTREAMER_CUDA_SUPPORT
-#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
-  friend class NvmmMemoryWrapper;
-#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
  private:
   // Configuration
@@ -177,12 +165,9 @@ class GstSrcBridge {
   // Reused for all subsequent buffers for efficient memory management.
   std::shared_ptr<MemoryWrapper> memory_wrapper_;
 
-#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
-  // Optional NVMM allocator for DeepStream zero-copy integration.
-  // When set, the memory wrapper factory will create NvmmMemoryWrapper instances
-  // that can look up NvBufSurface* from tensor data pointers.
-  std::shared_ptr<NvmmAllocator> nvmm_allocator_;
-#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+  // Optional custom allocator for specialized memory modes (e.g., NVMM/DeepStream).
+  // When set, the memory wrapper factory uses it for surface lookup during buffer creation.
+  std::shared_ptr<Allocator> custom_allocator_;
 
   // Frame timing
   uint64_t frame_count_ =

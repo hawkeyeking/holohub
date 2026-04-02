@@ -474,7 +474,7 @@ class GstSrcApp : public Application {
           Arg("mem_type", static_cast<int32_t>(2)));     // NVBUF_MEM_CUDA_DEVICE
       allocator = nvmm_alloc;
       // Set NVMM allocator on the resource for NvBufSurface lookup
-      holoscan_gst_src_resource_->set_nvmm_allocator(nvmm_alloc);
+      holoscan_gst_src_resource_->set_custom_allocator(nvmm_alloc);
       HOLOSCAN_LOG_INFO("Using NvmmAllocator for DeepStream zero-copy mode");
     } else
 #endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT

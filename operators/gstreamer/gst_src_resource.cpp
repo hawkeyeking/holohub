@@ -61,17 +61,10 @@ void GstSrcResource::initialize() {
 
   // Create the bridge (constructor initializes it)
   try {
-#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
-    if (nvmm_allocator_) {
-      bridge_ = std::make_shared<GstSrcBridge>(
-          name(), caps_.get(), max_buffers_.get(), nvmm_allocator_, block_.get());
-    } else {
-      bridge_ = std::make_shared<GstSrcBridge>(
-          name(), caps_.get(), max_buffers_.get(), block_.get());
-    }
-#else
     bridge_ = std::make_shared<GstSrcBridge>(name(), caps_.get(), max_buffers_.get(), block_.get());
-#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
+    if (custom_allocator_) {
+      bridge_->set_custom_allocator(custom_allocator_);
+    }
 
     // Set the promise with the GStreamer element so callers can wait for it
     element_promise_.set_value(bridge_->get_gst_element());
@@ -109,13 +102,12 @@ gst::Buffer GstSrcResource::create_buffer_from_tensor_map(const TensorMap& tenso
   return bridge_->create_buffer_from_tensor_map(tensor_map);
 }
 
-#if HOLOSCAN_GSTREAMER_NVMM_SUPPORT
-void GstSrcResource::set_nvmm_allocator(std::shared_ptr<NvmmAllocator> allocator) {
+void GstSrcResource::set_custom_allocator(std::shared_ptr<Allocator> allocator) {
   if (bridge_) {
-    HOLOSCAN_LOG_WARN("set_nvmm_allocator called after initialize() - allocator will not be used");
+    HOLOSCAN_LOG_WARN(
+        "set_custom_allocator called after initialize() - allocator will not be used");
   }
-  nvmm_allocator_ = std::move(allocator);
+  custom_allocator_ = std::move(allocator);
 }
-#endif  // HOLOSCAN_GSTREAMER_NVMM_SUPPORT
 
 }  // namespace holoscan

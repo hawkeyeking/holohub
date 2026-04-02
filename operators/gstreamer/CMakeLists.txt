@@ -31,14 +31,16 @@ pkg_check_modules(GSTREAMER_CUDA gstreamer-cuda-1.0)  # Optional - only availabl
 pkg_check_modules(GSTREAMER_APP REQUIRED gstreamer-app-1.0)
 
 # Find DeepStream nvbufsurface library (optional - for NVMM support)
-# DeepStream SDK installs headers to /opt/nvidia/deepstream/deepstream/sources/includes/
-# and libraries to /opt/nvidia/deepstream/deepstream/lib/
 set(DEEPSTREAM_ROOT "/opt/nvidia/deepstream/deepstream" CACHE PATH "DeepStream SDK root directory")
 find_path(NVBUFSURFACE_INCLUDE_DIR nvbufsurface.h
-    PATHS ${DEEPSTREAM_ROOT}/sources/includes
+    PATHS
+        ${DEEPSTREAM_ROOT}/sources/includes
     NO_DEFAULT_PATH)
 find_library(NVBUFSURFACE_LIBRARY nvbufsurface
-    PATHS ${DEEPSTREAM_ROOT}/lib
+    PATHS
+        ${DEEPSTREAM_ROOT}/lib
+        /usr/lib/x86_64-linux-gnu
+        /usr/lib/aarch64-linux-gnu
     NO_DEFAULT_PATH)
 
 if(NVBUFSURFACE_INCLUDE_DIR AND NVBUFSURFACE_LIBRARY)
@@ -70,11 +72,6 @@ add_library(holoscan_gstreamer_bridge SHARED
   gst_video_recorder_op.cpp
   gst_pipeline_bus_monitor.cpp
 )
-
-# Add NVMM allocator source if DeepStream is available
-if(NVBUFSURFACE_FOUND)
-    target_sources(holoscan_gstreamer_bridge PRIVATE nvmm_allocator.cpp)
-endif()
 
 # Create alias for consistent naming
 add_library(holoscan::ops::gstreamer_bridge ALIAS holoscan_gstreamer_bridge)
@@ -145,84 +142,26 @@ else()
 endif()
 
 # Configure NVMM/DeepStream support (optional - requires DeepStream SDK)
-# Look for nvbufsurface library and headers from DeepStream SDK
-set(DEEPSTREAM_SDK_PATH "/opt/nvidia/deepstream/deepstream" CACHE PATH "DeepStream SDK installation path")
-
-find_library(NVBUFSURFACE_LIBRARY
-    NAMES nvbufsurface
-    PATHS
-        ${DEEPSTREAM_SDK_PATH}/lib
-        /usr/lib/x86_64-linux-gnu
-        /usr/lib/aarch64-linux-gnu
-    NO_DEFAULT_PATH
-)
-find_path(NVBUFSURFACE_INCLUDE_DIR
-    NAMES nvbufsurface.h
-    PATHS
-        ${DEEPSTREAM_SDK_PATH}/sources/includes
-        /opt/nvidia/deepstream/deepstream/sources/includes
-    NO_DEFAULT_PATH
-)
-
-if(NVBUFSURFACE_LIBRARY AND NVBUFSURFACE_INCLUDE_DIR)
-    message(STATUS "NVMM/DeepStream support: ENABLED")
-    message(STATUS "  nvbufsurface library: ${NVBUFSURFACE_LIBRARY}")
-    message(STATUS "  nvbufsurface include: ${NVBUFSURFACE_INCLUDE_DIR}")
-
-    # Add NVMM source files
-    target_sources(holoscan_gstreamer_bridge PRIVATE
-        nvmm_allocator.cpp
-    )
-
-    # Add DeepStream include directories
-    target_include_directories(holoscan_gstreamer_bridge
-        PUBLIC
-        ${NVBUFSURFACE_INCLUDE_DIR}
-    )
-
-    # Link nvbufsurface library
-    target_link_libraries(holoscan_gstreamer_bridge
-        PUBLIC
-        ${NVBUFSURFACE_LIBRARY}
-    )
-
-    # Enable NVMM support compile definition
-    target_compile_definitions(holoscan_gstreamer_bridge
-        PUBLIC
-        HOLOSCAN_GSTREAMER_NVMM_SUPPORT=1
-    )
-else()
-    message(STATUS "NVMM/DeepStream support: DISABLED")
-    if(NOT NVBUFSURFACE_LIBRARY)
-        message(STATUS "  nvbufsurface library not found (set DEEPSTREAM_SDK_PATH if installed)")
-    endif()
-    if(NOT NVBUFSURFACE_INCLUDE_DIR)
-        message(STATUS "  nvbufsurface.h not found (set DEEPSTREAM_SDK_PATH if installed)")
-    endif()
-endif()
-
-# Configure NVMM/DeepStream support (optional - requires DeepStream SDK)
 if(NVBUFSURFACE_FOUND)
     message(STATUS "NVMM/DeepStream support: ENABLED")
 
-    # Add DeepStream include directories
+    target_sources(holoscan_gstreamer_bridge PRIVATE nvmm_allocator.cpp)
+
     target_include_directories(holoscan_gstreamer_bridge
         PUBLIC
         ${NVBUFSURFACE_INCLUDE_DIR}
     )
 
-    # Add nvbufsurface library
     target_link_libraries(holoscan_gstreamer_bridge
         PUBLIC
         ${NVBUFSURFACE_LIBRARY}
     )
 
-    # Enable NVMM support compile definition
     target_compile_definitions(holoscan_gstreamer_bridge PUBLIC
         HOLOSCAN_GSTREAMER_NVMM_SUPPORT=1
     )
 else()
-    message(STATUS "NVMM/DeepStream support: DISABLED (nvbufsurface library not found)")
+    message(STATUS "NVMM/DeepStream support: DISABLED (nvbufsurface not found)")
     target_compile_definitions(holoscan_gstreamer_bridge PUBLIC
         HOLOSCAN_GSTREAMER_NVMM_SUPPORT=0
     )
